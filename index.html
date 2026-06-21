@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ClearShell is an original ad-free Android file manager, address book, FS-focused MP3 player, notepad, high-precision calculator, launcher, and Linux command tool.">
+  <meta name="keywords" content="ClearShell, Android APK, file manager, address book, MP3 player, notepad, notes, contacts, email, calculator, high precision calculator, variables, camera, location, launcher, Linux commands, Nyasha Planet">
+  <meta name="author" content="Mikhail Kravchenko">
+  <link rel="canonical" href="/clearshell/">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="ClearShell">
+  <meta property="og:description" content="An original ad-free Android file manager, address book, MP3 player, notepad, calculator, launcher, and Linux command tool.">
+  <meta property="og:url" content="/clearshell/">
+  <meta property="og:image" content="/clearshell/clearshell.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ClearShell">
+  <meta name="twitter:description" content="Install ClearShell for Android: file manager, address book, MP3 player, notepad, calculator, launcher, and Linux command tool.">
+  <meta name="twitter:image" content="/clearshell/clearshell.jpg">
+  <script>
+    (() => {
+      const url = new URL(location.href);
+      if (url.search) {
+        url.search = "";
+        history.replaceState({}, "", url);
+      }
+    })();
+  </script>
+  <title>ClearShell</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fb;
+      color: #15171d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+
+    main {
+      width: min(100%, 720px);
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: clamp(32px, 8vw, 56px);
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 22px;
+      font-size: 18px;
+      line-height: 1.55;
+    }
+
+    a.image-link {
+      display: block;
+      margin: 0 0 22px;
+    }
+
+    img {
+      display: block;
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    .download {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 52px;
+      padding: 0 22px;
+      border-radius: 8px;
+      background: #1463ff;
+      color: white;
+      font-weight: 700;
+      font-size: 17px;
+      text-decoration: none;
+    }
+
+    .download:focus-visible,
+    .image-link:focus-visible {
+      outline: 3px solid #ffbf47;
+      outline-offset: 4px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        background: #101217;
+        color: #f3f5f8;
+      }
+
+      img {
+        border-color: rgba(255, 255, 255, 0.16);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ClearShell</h1>
+    <p>Open it when you need to quickly jot something down. ClearShell is an original, ad-free file manager, address book, FS-focused MP3 player, and notepad for jotting down short notes, creating new contacts, and sending emails. It's also a unique, high-precision calculator that remembers variables and allows you to perform calculations with comments. Camera and location buttons are always within reach. You can group application icons in the file system, launch them, and execute Linux commands.</p>
+
+    <a class="image-link" href="./build/ClearShell.apk" download>
+      <img src="./clearshell.jpg" alt="ClearShell">
+    </a>
+
+    <a class="download" href="./build/ClearShell.apk" download>Install ClearShell.apk</a>
+  </main>
+</body>
+</html>
