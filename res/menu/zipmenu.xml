@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <group android:id="@+id/menugroup1" >
+        <item
+            android:id="@+id/extract"
+            android:title="Extract"/>
+        <item
+            android:id="@+id/view"
+            android:title="Text view"/>
+
+    </group>
+
+</menu>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <group android:id="@+id/menugroup0" >
+        <item
+            android:id="@+id/google"
+            android:title="Google"/>
+        <item
+            android:id="@+id/copy"
+            android:title="Copy line to clipboard"/>
+    </group>
+    <group android:id="@+id/menugroup1">
+        <item
+            android:id="@+id/pasteBefore"
+            android:title="Paste line before"/>
+        <item
+            android:id="@+id/pasteAfter"
+            android:title="Paste line after"/>
+        <item
+            android:id="@+id/newBefore"
+            android:title="New line before"/>
+        <item
+            android:id="@+id/newAfter"
+            android:title="New line after"/>
+
+
+        <!--    <menu>
+                <item
+                    android:id="@+id/submenu"
+                    android:title="Подменю"/>
+            </menu>
+        </item>-->
+    </group>
+
+    <group android:id="@+id/menugroup2">
+        <item
+            android:id="@+id/cut"
+            android:title="Cut line to clipboard"/>
+     </group>
+    <group android:id="@+id/menugroup3">
+        <item
+            android:id="@+id/delete"
+            android:title="Delete line"/>
+    </group>
+
+</menu>

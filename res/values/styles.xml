@@ -1,0 +1,68 @@
+<!--
+  Copyright 2013 The Android Open Source Project
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+  -->
+<resources>
+
+    <!--
+        Base application theme, dependent on API level. This theme is replaced
+        by AppBaseTheme from res/values-vXX/styles.xml on newer devices.
+    -->
+    <style name="AppBaseTheme" parent="android:Theme.Light.NoTitleBar">
+        <!--
+            Theme customizations available in newer API levels can go in
+            res/values-vXX/styles.xml, while customizations related to
+            backward-compatibility can go here.
+        -->
+    </style>
+    <style name="font0">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#20202000</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:padding">0dip</item>
+    </style>
+    <style name="font1">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#20002000</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:padding">0dip</item>
+    </style>
+    <style name="font2">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#20000020</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:padding">0dip</item>
+    </style>
+    <style name="font3">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#20000020</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:padding">0dip</item>
+    </style>
+
+    <style name="fontButton">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#20200000</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:padding">0dip</item>
+        <item name="android:gravity">center</item>
+    </style>
+    <style name="fontSelButton">
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">#c0101000</item>
+        <item name="android:textSize">9sp</item>
+        <item name="android:padding">0dip</item>
+    </style>
+
+</resources>

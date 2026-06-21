@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android" >
+
+    <group android:id="@+id/menugroup1" >
+        <item
+            android:id="@+id/sysOpen"
+            android:title="Sys open"/>
+        <item
+            android:id="@+id/edit"
+            android:title="Text view/edit"/>
+        <item
+            android:id="@+id/rename"
+            android:title="Rename"/>
+        <item
+            android:id="@+id/printPath"
+            android:title="Print path"/>
+        <item
+            android:id="@+id/copyPath"
+            android:title="Copy path"/>
+
+        <!--    <menu>
+                <item
+                    android:id="@+id/submenu"
+                    android:title="Подменю"/>
+            </menu>
+        </item>-->
+    </group>
+    <group android:id="@+id/menugroup2" >
+        <item
+            android:id="@+id/delete"
+            android:title="Delete"/>
+
+    </group>
+
+</menu>

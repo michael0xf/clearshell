@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"   xmlns:tools="http://schemas.android.com/tools"
+    package="com.mtk.shell"
+    android:versionCode="9"
+    android:versionName="1.0.3" >
+
+    <!-- Min/target SDK versions (<uses-sdk>) managed by build.gradle -->
+    <uses-feature android:name="android.hardware.camera" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_INTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.READ_INTERNAL_STORAGE"/>
+    <uses-permission android:name="android.permission.ACCESS_SUPERUSER" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/AppTheme" >
+
+
+            <activity
+                android:configChanges="orientation"
+                android:name="com.mtk.shell.ClearShell"
+                android:label="@string/app_name"
+                android:exported="true"
+                tools:ignore="Instantiatable">
+                <intent-filter>
+                    <action android:name="android.intent.action.MAIN" />
+
+                    <category android:name="android.intent.category.LAUNCHER" />
+                </intent-filter>
+            </activity>
+
+
+        <receiver
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.RECEIVE_BOOT_COMPLETED"
+            android:name="com.mtk.shell.AutoStartClearShell"
+            android:label="AutoStartClearShell"
+            tools:ignore="Instantiatable">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
+
+            </intent-filter>
+        </receiver>
+        <service
+            android:name="com.mtk.shell.AudioService"
+            android:enabled="true"
+            android:exported="true"
+            tools:ignore="Instantiatable"></service>
+       <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.mtk.shell"
+            android:exported="false"
+           android:enabled="true"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+
+</manifest>
