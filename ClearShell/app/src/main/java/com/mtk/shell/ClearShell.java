@@ -31,6 +31,7 @@ import android.hardware.Camera;
 import android.media.MediaMetadataRetriever;
 import android.media.ThumbnailUtils;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.IBinder;
@@ -89,7 +90,6 @@ import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -6466,26 +6466,18 @@ The application does not contain advertising and is focused on business people w
 
      */
     void printBelow(String message){
+        if (!notEmpty(message))
+            return;
         ClearShell.this.runOnUiThread(
                 new Runnable() {
                     @Override
                     public void run() {
                         Editable edit = text().getText();
-                        int end = text().getSelectionEnd();
-                        char c;
-                        while (end < text.length()) {
-                            c = edit.charAt(end);
-                            if (c == '\n') {
-                                break;
-                            }
-                            end++;
-                        }
-                        String sp = message;
-
-                        if (end < text.length())
-                            text().getText().insert(end, sp + '\n');
-                        else
-                            text().getText().insert(end, '\n' + sp);
+                        if (edit.length() > 0 && edit.charAt(edit.length() - 1) != '\n')
+                            edit.append('\n');
+                        edit.append(message);
+                        if (edit.length() > 0 && edit.charAt(edit.length() - 1) != '\n')
+                            edit.append('\n');
                         text.setSelection(text().getText().length(), text().getText().length());
                         text().invalidate();
                     };
@@ -8414,6 +8406,7 @@ The application does not contain advertising and is focused on business people w
     @Override
     protected void onDestroy() {
         try{
+            cancelShellCommand(false);
             // Unbound background audio service when activity is destroyed.
             listPanel().closeAll();
             printLog("onDestroy");
@@ -12311,13 +12304,64 @@ newIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);*/
         String args = getLine();
         su(args);
     }
+
+    // A large append forces Android's EditText to re-layout the whole shared
+    // document on the UI thread. 64 KiB is enough for diagnostics while still
+    // keeping an accidental `cat`/`seq` result responsive.
+    private static final int SHELL_OUTPUT_LIMIT = 64 * 1024;
+    private static final int SHELL_OUTPUT_LINE_LIMIT = 1000;
+    private static final int SHELL_TAIL_LIMIT = 16 * 1024;
+    private final Object shellCommandLock = new Object();
+    private volatile Process shellProcess;
+    private volatile Thread shellThread;
+    private volatile File shellWorkingDirectory;
+    private volatile String shellRunningCommand;
+    private volatile long shellProcessGroupId = -1;
+    private int shellCommandGeneration = 0;
+
+    private File getShellWorkingDirectory(){
+        File directory = shellWorkingDirectory;
+        if (directory == null || !directory.exists() || !directory.isDirectory())
+            directory = new File(myDir());
+        try {
+            directory = directory.getCanonicalFile();
+        } catch (IOException ignored) {
+            directory = directory.getAbsoluteFile();
+        }
+        shellWorkingDirectory = directory;
+        return directory;
+    }
+
+    private boolean isShellCommandRunning(){
+        synchronized (shellCommandLock){
+            return shellThread != null;
+        }
+    }
+
     public void su(String args) {
+        if (isShellCommandRunning()){
+            String command = shellRunningCommand;
+            new AlertDialog.Builder(ClearShell.this)
+                    .setTitle("OS command is running")
+                    .setMessage(notEmpty(command) ? command : "Please wait or stop it.")
+                    .setPositiveButton("Stop", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            cancelShellCommand(true);
+                        }
+                    })
+                    .setNegativeButton("Continue", null)
+                    .show();
+            return;
+        }
+
+        File directory = getShellWorkingDirectory();
         AlertDialog.Builder alert = new AlertDialog.Builder(ClearShell.this);
         final EditText edittext = new EditText(ClearShell.this);
         edittext.setText(args);
         edittext.setSelection(edittext.length());
-        alert.setMessage("Command:");
-        alert.setTitle("Run shell command");
+        alert.setMessage("Android shell command\nWorking directory: " + directory.getAbsolutePath());
+        alert.setTitle("Run OS command");
 
         alert.setView(edittext);
 
@@ -12326,6 +12370,8 @@ newIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);*/
                 try{
                     //What ever you want to do with the value
                     final String text = edittext.getText().toString();
+                    if (!notEmpty(text.trim()))
+                        return;
                     su2(text);
                 }catch (Exception e){
                     ClearShell.this.printError(e);
@@ -12352,83 +12398,369 @@ newIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);*/
 
 
 
+    class ShellOutputCapture {
+        final StringBuilder beginning = new StringBuilder();
+        final StringBuilder tail = new StringBuilder();
+        long length = 0;
+        int retainedLines = 0;
+
+        void append(char[] buffer, int count){
+            length += count;
+            int remaining = SHELL_OUTPUT_LIMIT - beginning.length();
+            int retain = Math.min(remaining, count);
+            for (int i = 0; i < retain && retainedLines < SHELL_OUTPUT_LINE_LIMIT; i++){
+                char value = buffer[i];
+                beginning.append(value);
+                if (value == '\n')
+                    retainedLines++;
+            }
+
+            tail.append(buffer, 0, count);
+            if (tail.length() > SHELL_TAIL_LIMIT)
+                tail.delete(0, tail.length() - SHELL_TAIL_LIMIT);
+        }
+
+    }
+
+    class ShellResult {
+        String output;
+        int exitCode;
+        File directory;
+        boolean truncated;
+    }
+
+    private ShellResult shellResult(ShellOutputCapture capture, String marker,
+                                    int processExitCode, File startingDirectory){
+        ShellResult result = new ShellResult();
+        result.exitCode = processExitCode;
+        result.directory = startingDirectory;
+
+        String markerStart = marker + "\t";
+        String tail = capture.tail.toString();
+        int markerPosition = tail.lastIndexOf(markerStart);
+        long userOutputLength = capture.length;
+        if (markerPosition >= 0){
+            long tailOffset = capture.length - tail.length();
+            userOutputLength = tailOffset + markerPosition;
+            // The trailer deliberately starts with one newline. It is not part
+            // of the command's output and must not count towards the cap.
+            if (markerPosition > 0 && tail.charAt(markerPosition - 1) == '\n')
+                userOutputLength--;
+            int valueStart = markerPosition + markerStart.length();
+            int lineEnd = tail.indexOf('\n', valueStart);
+            if (lineEnd < 0)
+                lineEnd = tail.length();
+            String values = tail.substring(valueStart, lineEnd);
+            int separator = values.indexOf('\t');
+            if (separator >= 0){
+                try {
+                    result.exitCode = Integer.parseInt(values.substring(0, separator));
+                } catch (NumberFormatException ignored) {
+                }
+                String path = values.substring(separator + 1);
+                if (notEmpty(path)){
+                    File directory = new File(path);
+                    try {
+                        directory = directory.getCanonicalFile();
+                    } catch (IOException ignored) {
+                        directory = directory.getAbsoluteFile();
+                    }
+                    if (directory.exists() && directory.isDirectory())
+                        result.directory = directory;
+                }
+            }
+        }
+
+        String output = capture.beginning.toString();
+        int markerInBeginning = output.lastIndexOf(markerStart);
+        if (markerInBeginning >= 0){
+            output = output.substring(0, markerInBeginning);
+            if (output.endsWith("\n"))
+                output = output.substring(0, output.length() - 1);
+        }
+        result.output = output;
+        result.truncated = userOutputLength > result.output.length();
+        return result;
+    }
+
+    private String shellTranscript(String command, ShellResult result){
+        StringBuilder transcript = new StringBuilder();
+        transcript.append("$ ").append(command).append('\n');
+        if (notEmpty(result.output)){
+            transcript.append(result.output);
+            if (transcript.charAt(transcript.length() - 1) != '\n')
+                transcript.append('\n');
+        }
+        if (result.truncated)
+            transcript.append("[output truncated after ")
+                    .append(SHELL_OUTPUT_LIMIT).append(" characters or ")
+                    .append(SHELL_OUTPUT_LINE_LIMIT).append(" lines]\n");
+        transcript.append("[exit ").append(result.exitCode)
+                .append(", cwd=").append(result.directory.getAbsolutePath()).append(']');
+        return transcript.toString();
+    }
+
+    private boolean isCurrentShellCommand(int generation){
+        synchronized (shellCommandLock){
+            return generation == shellCommandGeneration;
+        }
+    }
+
+    private void finishShellCommand(int generation){
+        synchronized (shellCommandLock){
+            if (generation != shellCommandGeneration)
+                return;
+            shellProcess = null;
+            shellThread = null;
+            shellRunningCommand = null;
+            shellProcessGroupId = -1;
+        }
+    }
+
+    private void terminateShellProcess(Process process, long processGroupId){
+        if (process == null)
+            return;
+
+        // setsid gives the command its own process group. Killing that group
+        // also stops ordinary children (for example `sleep` or a pipeline),
+        // rather than leaving them behind after the wrapper shell exits.
+        if (processGroupId > 0){
+            try {
+                new ProcessBuilder(
+                        "/system/bin/kill", "-KILL", "--", "-" + processGroupId).start();
+            } catch (IOException ignored) {
+            }
+        }
+        try {
+            process.getInputStream().close();
+        } catch (IOException ignored) {
+        }
+        try {
+            process.getErrorStream().close();
+        } catch (IOException ignored) {
+        }
+        try {
+            process.getOutputStream().close();
+        } catch (IOException ignored) {
+        }
+        process.destroy();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && process.isAlive())
+            process.destroyForcibly();
+    }
+
+    private void cancelShellCommand(boolean showMessage){
+        Process process;
+        Thread thread;
+        long processGroupId;
+        synchronized (shellCommandLock){
+            shellCommandGeneration++;
+            process = shellProcess;
+            thread = shellThread;
+            processGroupId = shellProcessGroupId;
+            shellProcess = null;
+            shellThread = null;
+            shellRunningCommand = null;
+            shellProcessGroupId = -1;
+        }
+        terminateShellProcess(process, processGroupId);
+        if (thread != null)
+            thread.interrupt();
+        if (showMessage)
+            printBelow("[OS command stopped]");
+    }
+
     public void su2(String args) {
-        new Thread(new Runnable() {
+        final String command = args == null ? "" : args;
+        if (!notEmpty(command.trim()))
+            return;
+
+        final File startingDirectory = getShellWorkingDirectory();
+        final int generation;
+        final Thread worker;
+        synchronized (shellCommandLock){
+            if (shellThread != null){
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(ClearShell.this, "An OS command is already running.", Toast.LENGTH_LONG).show();
+                    }
+                });
+                return;
+            }
+            generation = ++shellCommandGeneration;
+            worker = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    runShellCommand(command, startingDirectory, generation);
+                }
+            }, "ClearShell-OS-command");
+            shellThread = worker;
+            shellRunningCommand = command;
+        }
+        worker.start();
+    }
+
+    private long readShellProcessGroup(File pidFile) {
+        boolean interrupted = false;
+        try {
+            for (int attempt = 0; attempt < 40; attempt++){
+                if (pidFile.exists()){
+                    try (BufferedReader reader = new BufferedReader(new FileReader(pidFile))) {
+                        String value = reader.readLine();
+                        if (notEmpty(value))
+                            return Long.parseLong(value.trim());
+                    } catch (IOException | NumberFormatException ignored) {
+                    }
+                }
+                try {
+                    Thread.sleep(5);
+                } catch (InterruptedException ignored) {
+                    // Stop may arrive before the bootstrap has written its PID.
+                    // Keep polling briefly so the worker can kill the complete
+                    // process group, then restore the interrupt status.
+                    interrupted = true;
+                }
+            }
+            return -1;
+        } finally {
+            pidFile.delete();
+            if (interrupted)
+                Thread.currentThread().interrupt();
+        }
+    }
+
+    private void runShellCommand(String command, File startingDirectory, int generation){
+        Process process = null;
+        long processGroupId = -1;
+        boolean resultScheduled = false;
+        String marker = "__CLEAR_SHELL_" + generation + "_" + System.nanoTime() + "__";
+        String variableSuffix = generation + "_" + Long.toHexString(System.nanoTime());
+        String statusVariable = "__clear_shell_status_" + variableSuffix;
+        String directoryVariable = "__clear_shell_directory_" + variableSuffix;
+        String script = command + "\n"
+                + statusVariable + "=$?\n"
+                + directoryVariable + "=$(pwd -P 2>/dev/null)\n"
+                + "printf '\\n" + marker + "\\t%s\\t%s\\n' \"$" + statusVariable
+                + "\" \"$" + directoryVariable + "\"\n"
+                + "exit \"$" + statusVariable + "\"\n";
+        try {
+            boolean useProcessGroup = new File("/system/bin/setsid").canExecute();
+            ProcessBuilder processBuilder;
+            File pidFile = null;
+            if (useProcessGroup){
+                pidFile = new File(getCacheDir(), "shell-process-" + variableSuffix + ".pid");
+                pidFile.delete();
+                String bootstrap = "printf '%s' \"$$\" > \"$1\"\n"
+                        + "exec /system/bin/sh -c \"$2\"\n";
+                processBuilder = new ProcessBuilder(
+                        "/system/bin/setsid", "/system/bin/sh", "-c", bootstrap,
+                        "ClearShell", pidFile.getAbsolutePath(), script);
+            } else {
+                processBuilder = new ProcessBuilder("/system/bin/sh", "-c", script);
+            }
+            processBuilder.directory(startingDirectory);
+            processBuilder.redirectErrorStream(true);
+            processBuilder.environment().put("HOME", myHomeDir());
+            processBuilder.environment().put("PWD", startingDirectory.getAbsolutePath());
+            process = processBuilder.start();
+            boolean cancelledBeforeRegistration = false;
+            synchronized (shellCommandLock){
+                if (generation != shellCommandGeneration){
+                    cancelledBeforeRegistration = true;
+                } else {
+                    shellProcess = process;
+                }
+            }
+            if (cancelledBeforeRegistration){
+                if (useProcessGroup)
+                    processGroupId = readShellProcessGroup(pidFile);
+                terminateShellProcess(process, processGroupId);
+                return;
+            }
+            if (useProcessGroup)
+                processGroupId = readShellProcessGroup(pidFile);
+            synchronized (shellCommandLock){
+                if (generation != shellCommandGeneration){
+                    terminateShellProcess(process, processGroupId);
+                    return;
+                }
+                shellProcessGroupId = processGroupId;
+            }
+
+            // Commands launched here are non-interactive. Closing stdin also
+            // prevents commands such as `cat` from waiting forever for input.
+            process.getOutputStream().close();
+            ShellOutputCapture capture = new ShellOutputCapture();
+            try (InputStreamReader reader = new InputStreamReader(process.getInputStream(), "UTF-8")) {
+                char[] buffer = new char[4096];
+                int count;
+                while ((count = reader.read(buffer)) >= 0){
+                    if (count > 0)
+                        capture.append(buffer, count);
+                    if (Thread.currentThread().isInterrupted() || !isCurrentShellCommand(generation))
+                        return;
+                }
+            }
+            int exitCode = process.waitFor();
+            if (!isCurrentShellCommand(generation))
+                return;
+
+            ShellResult result = shellResult(capture, marker, exitCode, startingDirectory);
+            publishShellResult(generation, command, result);
+            resultScheduled = true;
+        } catch (InterruptedException ignored) {
+            Thread.currentThread().interrupt();
+        } catch (IOException e) {
+            if (isCurrentShellCommand(generation)){
+                terminateShellProcess(process, processGroupId);
+                error(e);
+                ShellResult result = new ShellResult();
+                result.output = "Unable to run command: " + e.getMessage();
+                result.exitCode = -1;
+                result.directory = startingDirectory;
+                publishShellResult(generation, command, result);
+                resultScheduled = true;
+            }
+        } finally {
+            if (process != null){
+                try {
+                    process.getInputStream().close();
+                } catch (IOException ignored) {
+                }
+                try {
+                    process.getErrorStream().close();
+                } catch (IOException ignored) {
+                }
+            }
+            if (!resultScheduled){
+                // This worker owns its local process. Always clean it up here:
+                // Stop may already have advanced the generation and cleared
+                // the global references while the PID bootstrap was running.
+                terminateShellProcess(process, processGroupId);
+                finishShellCommand(generation);
+            }
+        }
+    }
+
+    private void publishShellResult(int generation, String command, ShellResult result){
+        final String transcript = shellTranscript(command, result);
+        runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                StringBuilder res = new StringBuilder();
-                DataOutputStream outputStream = null;
-
-                InputStream response = null;
-                InputStream errors = null;
-                try
-
-                {
-                    //String command = getLine();
-
-                    String[] commands = args.split(" ");
-
-                    Process su = Runtime.getRuntime().exec(commands);
-
-
-
-                    response = su.getInputStream();
-                    String line;
-                    //Входной поток может что-нибудь вернуть
-                    BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(response));
-                    while ((line = bufferedReader.readLine()) != null){
-/*                        if ((res.length() == 0) && (line.length() > 0)) {
-                            res.append('\n');
-                        }*/
-                        res.append(line + "\n");
-                    }
-/*                    errors = su.getErrorStream();
-                    bufferedReader = new BufferedReader(new InputStreamReader(errors));
-
-                    while ((line = bufferedReader.readLine()) != null){
-                        if ((res.length() > 0) && (line.length() > 0)) {
-                            res.append('\n');
-                        }
-                        res.append(line);
-                    }*/
-                 /*   outputStream = new DataOutputStream(su.getOutputStream());
-                    outputStream.writeBytes("exit\n");
-                    outputStream.flush();*/
-                    printBelow(res.toString());
-
-                } catch(IOException e)
-                {
-                    printUpperError(e);
-                } finally
-                {
-                    if (errors != null){
-                        try {
-                            errors.close();
-                        }catch(Throwable t){
-
-                        }
-                    }
-
-                    if (response != null){
-                        try {
-                            response.close();
-                        }catch(Throwable t){
-
-                        }
-                    }
-                    if (outputStream != null){
-                        try {
-                            outputStream.close();
-                        }catch(Throwable t){
-
-                        }
-                    }
-                    //closeSilently(outputStream, response);
+                synchronized (shellCommandLock){
+                    // Stop/onDestroy may have happened after waitFor() but
+                    // before this UI callback. Never publish that stale result.
+                    if (generation != shellCommandGeneration)
+                        return;
+                    shellWorkingDirectory = result.directory;
+                    shellProcess = null;
+                    shellThread = null;
+                    shellRunningCommand = null;
+                    shellProcessGroupId = -1;
                 }
-
-
+                printBelow(transcript);
             }
-        }).start();
+        });
     }
 
     void clip(String tag, String str){

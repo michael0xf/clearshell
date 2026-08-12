@@ -28,8 +28,8 @@ android {
         applicationId = "com.mtk.shell"
         minSdk = 21
         targetSdk = 34
-        versionCode = 195
-        versionName = "1.0.7"
+        versionCode = 196
+        versionName = "1.0.8"
         multiDexEnabled = true
 
     }
