@@ -1552,6 +1552,9 @@ The application does not contain advertising and is focused on business people w
     public void onResume() {
         printLog("onResume");
         super.onResume();
+        if (!started) {
+            return;
+        }
         if (photo != null){
             if (photo.isDirectory()){
                 if (photo.exists()){
@@ -6564,21 +6567,35 @@ The application does not contain advertising and is focused on business people w
     }
 
     class AllContacts{
-        ArrayList phones;
-        ArrayList emails;
+        ArrayList phones = new ArrayList();
+        ArrayList emails = new ArrayList();
     }
 
     AllContacts allContacts = new AllContacts();
 
     void findContacts() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            allContacts = new AllContacts();
+            if (contactAdapter != null) {
+                contactAdapter.refresh0();
+            }
+            return;
+        }
         new Thread(new Runnable() {
             @Override
             public void run() {
-                final AllContacts allContacts = findContacts0();
+                AllContacts contacts;
+                try {
+                    contacts = findContacts0();
+                } catch (SecurityException e) {
+                    contacts = new AllContacts();
+                }
+                final AllContacts loadedContacts = contacts;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        ClearShell.this.allContacts = allContacts;
+                        ClearShell.this.allContacts = loadedContacts;
                         if (contactAdapter != null)
                             contactAdapter.refresh0();
                     }
@@ -6591,8 +6608,10 @@ The application does not contain advertising and is focused on business people w
     */
     AllContacts findContacts0(){
         AllContacts ret = new AllContacts();
-        ret.phones = new ArrayList<>();
-        ret.emails = new ArrayList<>();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.READ_CONTACTS)
+                != PackageManager.PERMISSION_GRANTED) {
+            return ret;
+        }
   /*      for(int i = 0; i < names.length; i++) {
             ItemContact itemContact = new ItemContact();
             itemContact.id = i + "";
@@ -6604,12 +6623,16 @@ The application does not contain advertising and is focused on business people w
 
         ContentResolver cr = getContentResolver();
         Cursor cur = cr.query(ContactsContract.Contacts.CONTENT_URI, null, null, null, null);
+        if (cur == null) {
+            return ret;
+        }
         // String name, number = "";
-        int count = cur.getCount();
-        cur.moveToFirst();
+        try {
+            int count = cur.getCount();
+            cur.moveToFirst();
 
-        if (count > 0) {
-            do{
+            if (count > 0) {
+                do{
                 String id = cur.getString(cur.getColumnIndex(ContactsContract.Contacts._ID));
                 String name = cur.getString(cur.getColumnIndex(ContactsContract.Contacts.DISPLAY_NAME));
                 Uri mSelectedContactUri = null;
@@ -6653,9 +6676,10 @@ The application does not contain advertising and is focused on business people w
                     ret.phones.add(itemContact);
 
                 }
-
-
-            }while (cur.moveToNext());
+                }while (cur.moveToNext());
+            }
+        } finally {
+            cur.close();
         }
         return ret;
 
@@ -6670,6 +6694,9 @@ The application does not contain advertising and is focused on business people w
                 null,
                 ContactsContract.CommonDataKinds.Phone.CONTACT_ID +" = ?",
                 new String[]{id}, null);
+        if (pCur == null) {
+            return phones;
+        }
         while (pCur.moveToNext()) {
             String s = pCur.getString(pCur.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER));
             phones.add(s);
@@ -6686,6 +6713,9 @@ The application does not contain advertising and is focused on business people w
                 null,
                 ContactsContract.CommonDataKinds.Email.CONTACT_ID + " = ?",
                 new String[]{id}, null);
+        if (emailCur == null) {
+            return emails;
+        }
         while (emailCur.moveToNext()) {
             // This would allow you get several email addresses
             String s = emailCur.getString(emailCur.getColumnIndex(ContactsContract.CommonDataKinds.Email.DATA));
@@ -9459,28 +9489,34 @@ public static long folderSize(File directory) {
  */
 
 
-    final static String[] PERMISSIONS = new String[] {
-            Manifest.permission.RECEIVE_BOOT_COMPLETED,
+    final static String[] STARTUP_PERMISSIONS = new String[] {
             Manifest.permission.CAMERA,
-            Manifest.permission.READ_EXTERNAL_STORAGE,
-            Manifest.permission.WRITE_EXTERNAL_STORAGE,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.READ_PHONE_STATE
-
-
+            Manifest.permission.READ_CONTACTS
     };
+    final static int REQUEST_STARTUP_PERMISSIONS = 100;
+    final static int PERMISSION_CALL_PHONE = 101;
+
     boolean started = false;
     void checkPermissions(){
-        int i = 0;
-        for(String permission: PERMISSIONS){
+        ArrayList<String> missingPermissions = new ArrayList<>();
+        for(String permission: STARTUP_PERMISSIONS){
             if (ActivityCompat.checkSelfPermission(this, permission)
                     != PackageManager.PERMISSION_GRANTED) {
-                ActivityCompat.requestPermissions(this, new String[] { permission },
-                        i);
-                return;
+                missingPermissions.add(permission);
             }
-            i++;
+        }
+        if (!missingPermissions.isEmpty()) {
+            ActivityCompat.requestPermissions(this,
+                    missingPermissions.toArray(new String[0]),
+                    REQUEST_STARTUP_PERMISSIONS);
+            return;
+        }
+        startAppOnce();
+    }
+
+    void startAppOnce(){
+        if (started) {
+            return;
         }
 /*        CameraManager.TorchCallback torchCallback = new CameraManager.TorchCallback() {
             @Override
@@ -9498,29 +9534,27 @@ public static long folderSize(File directory) {
         manager.registerTorchCallback(torchCallback, null);// (callback, handler)*/
         started = true;
         loadProperties();
-        svPreview();
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            svPreview();
+        }
         bindAudioService();
         init();
         load();
     }
 
-    int PERMISSION_CALL_PHONE = PERMISSIONS.length;
     @Override
     public void onRequestPermissionsResult(int requestCode,
                                            String permissions[], int[] grantResults) {
-        if (requestCode < PERMISSIONS.length) {
-            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                checkPermissions();
-                return;
-            }else{
-                System.exit(-1);
-            }
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_STARTUP_PERMISSIONS) {
+            startAppOnce();
+            return;
         }
         if (requestCode == PERMISSION_CALL_PHONE) {
-            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            if (grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 call();
-            }else{
-
             }
         }
 

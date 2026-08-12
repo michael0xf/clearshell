@@ -1,5 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
+}
+
+val signingProperties = Properties().apply {
+    val signingPropertiesFile = file("signing.properties")
+    if (signingPropertiesFile.isFile) {
+        signingPropertiesFile.inputStream().use { load(it) }
+    }
 }
 
 android {
@@ -8,10 +17,10 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("release.keystore")
-            storePassword = ""
-            keyAlias = "keyalias"
-            keyPassword = ""
+            storeFile = file(signingProperties.getProperty("storeFile", "release.keystore"))
+            storePassword = signingProperties.getProperty("storePassword", "")
+            keyAlias = signingProperties.getProperty("keyAlias", "keyalias")
+            keyPassword = signingProperties.getProperty("keyPassword", "")
         }
     }
 
@@ -19,8 +28,8 @@ android {
         applicationId = "com.mtk.shell"
         minSdk = 21
         targetSdk = 34
-        versionCode = 192
-        versionName = "1.0.4"
+        versionCode = 194
+        versionName = "1.0.6"
         multiDexEnabled = true
 
     }
