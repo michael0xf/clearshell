@@ -3020,11 +3020,15 @@ The application does not contain advertising and is focused on business people w
 
         @Override
         public void save(PrintWriter writer) {
-            writer.println("position=" + listView.getSelectedItemPosition());
+            writer.println("position=" + savedPosition());
             if (notEmpty(filteredWord))
                 writer.println("filtering=" + filteredWord);
             writer.println("scrollX=" + buttonPanel.hScroll().getScrollX());
             writer.println("information=" + decode(info0.getText().toString()));
+        }
+
+        int savedPosition() {
+            return listView.getSelectedItemPosition();
         }
 
 
@@ -4840,8 +4844,6 @@ The application does not contain advertising and is focused on business people w
                 int totalHeight = allHeight;
                 Adapter adapter = getAdapter();
                 final ArrayList<Item> arr = new ArrayList(32);
-                int b = Thread.currentThread().getPriority();
-                Thread.currentThread().setPriority(Thread.MAX_PRIORITY);
                 for (int i = 0; (i < getCount()) && (counter < getCount()); i++) {
                     Item item = null;
                     try {
@@ -4880,7 +4882,6 @@ The application does not contain advertising and is focused on business people w
                 }
                 totalHeight = totalHeight + (max >> 2);
                 allHeight = totalHeight;
-                Thread.currentThread().setPriority(b);
                 getAdapter().unLock();
                 new Thread(new Runnable() {
                     @Override
@@ -9868,21 +9869,177 @@ public static long folderSize(File directory) {
     }
 
     class TextAdapter extends Adapter{
+        private static final int PAGE_SIZE = 128;
+        private static final int MAX_RENDERED_LINE_LENGTH = 8192;
+        private static final long MAX_TEXT_FILE_BYTES = 16L * 1024L * 1024L;
+        private static final long MAX_TEXT_CHARACTERS = 16L * 1024L * 1024L;
+        private static final int MAX_TEXT_LINES = 100000;
+
         File file;
         HashMap<Item, Integer> selectedText = new HashMap();
+        int pageStart = 0;
+        ShellButton previousPage;
+        ShellButton nextPage;
+        volatile int loadGeneration = 0;
+        volatile Thread loadThread;
+        Integer positionToRestore;
+        Integer editedLineToRestore;
+
+        class TextFileTooLargeException extends IOException {
+            TextFileTooLargeException(){
+                super("ClearShell can edit text files up to 16 MB and 100,000 lines. "
+                        + "This limit prevents Android from running out of memory.");
+            }
+        }
+
+        @Override
+        int getCount(){
+            if (current == null)
+                return 0;
+            int remaining = current.size() - pageStart;
+            if (remaining <= 0)
+                return 0;
+            return Math.min(PAGE_SIZE, remaining);
+        }
+
+        @Override
+        void setCurrent(List<Object> all){
+            pageStart = 0;
+            super.setCurrent(all);
+            items.clear();
+            selectedText.clear();
+            updatePageButtons();
+        }
+
+        @Override
+        int savedPosition() {
+            return pageStart + listView.getSelectedItemPosition();
+        }
+
+        private void updatePageButtons(){
+            int total = current == null ? 0 : current.size();
+            if (previousPage != null)
+                previousPage.button().setEnabled(pageStart > 0);
+            if (nextPage != null)
+                nextPage.button().setEnabled(pageStart + PAGE_SIZE < total);
+        }
+
+        private void showPage(int requestedStart){
+            int total = current == null ? 0 : current.size();
+            int lastStart = total == 0 ? 0 : ((total - 1) / PAGE_SIZE) * PAGE_SIZE;
+            int newStart = Math.max(0, Math.min(requestedStart, lastStart));
+            if (newStart == pageStart)
+                return;
+            if (!finishLineEdit())
+                return;
+
+            pageStart = newStart;
+            super.setCurrent(current);
+            items.clear();
+            selectedText.clear();
+            listView.setSelection(0);
+            setDefaultText();
+            mainRelayout2();
+        }
+
+        private boolean finishLineEdit(){
+            if (!isEdit())
+                return true;
+            try {
+                Item edited = firstScreen().edited;
+                changeLine(edited.globalPosition, text().getText().toString());
+                firstScreen.edited = null;
+                firstScreen.editedFile = null;
+                firstScreen.setDefaultFileName();
+                text().setText("");
+                return true;
+            } catch (Exception e) {
+                printError(e);
+                return false;
+            }
+        }
+
+        private void previousPage(){
+            showPage(pageStart - PAGE_SIZE);
+        }
+
+        private void nextPage(){
+            showPage(pageStart + PAGE_SIZE);
+        }
+
+        @Override
+        void changeFiltering(){
+            if (finishLineEdit())
+                super.changeFiltering();
+        }
+
+        @Override
+        void filter(){
+            super.filter();
+            setDefaultText();
+        }
+
+        private String renderedLine(String text){
+            if (text == null)
+                return "";
+            if (text.length() <= MAX_RENDERED_LINE_LENGTH)
+                return text;
+            return text.substring(0, MAX_RENDERED_LINE_LENGTH)
+                    + "\u2026 [line shortened for display]";
+        }
+
+        class TextItem extends Item {
+            String rawText;
+
+            TextItem(int globalPosition, String rawText){
+                super(globalPosition);
+                this.rawText = rawText;
+            }
+
+            void setRawText(String text){
+                rawText = text == null ? "" : text;
+                if (textView != null)
+                    textView.setText(renderedLine(rawText));
+            }
+
+            @Override
+            public String toString(){
+                return rawText;
+            }
+
+            @Override
+            boolean isSelect(){
+                return selectedText.containsKey(this);
+            }
+
+            @Override
+            void remove(){
+                selectedText.remove(this);
+                super.remove();
+            }
+        }
 
         @Override
         public void setDefaultText(){
-            if (notEmpty(filteredWord))
-                info0.setText("Filter: " + filteredWord);
-            else {
-                if (file != null)
-                    info0.setText(file.getAbsolutePath());
-                else {
-                    log("Empty file");
-                    info0.setText("Empty file");
-                }
+            int total = current == null ? 0 : current.size();
+            StringBuilder text = new StringBuilder();
+            if (notEmpty(filteredWord)) {
+                text.append("Filter: ").append(filteredWord);
+            } else if (file != null) {
+                text.append(file.getAbsolutePath());
+            } else {
+                log("Empty file");
+                text.append("Empty file");
             }
+
+            if (total > PAGE_SIZE) {
+                int first = pageStart + 1;
+                int last = Math.min(pageStart + PAGE_SIZE, total);
+                text.append(" — lines ").append(first).append('-').append(last)
+                        .append(" of ").append(total);
+            }
+            info0.setText(text.toString());
+            updatePageButtons();
             info0.invalidate();
         }
 
@@ -9944,6 +10101,10 @@ public static long folderSize(File directory) {
 
         @Override
         public void start(Tag tag) {
+            super.start(tag);
+            positionToRestore = tag.getLocalIntByName("position");
+            listView().loadedPosition = null;
+            editedLineToRestore = null;
             if (!notEmpty(loadedFile))
                 return;
             file = createFile();
@@ -9963,6 +10124,7 @@ public static long folderSize(File directory) {
                         if (editFile.equals(loadedFile)) {
                             String f = tag.getStringByLink("#lastModified");
                             if (notEmpty(f)) {
+                                editedLineToRestore = line;
                                 setEditedLine = new Runnable() {
                                     @Override
                                     public void run() {
@@ -9971,7 +10133,7 @@ public static long folderSize(File directory) {
 
                                             if (file.lastModified() == Long.parseLong(f)) {
                                                 listView().allHeight();
-                                                if (line >= items.size()) {
+                                                if (items.get(line) == null) {
                                                     errLoadDialog(line, editFile);;
                                                     return;
                                                 }
@@ -10107,8 +10269,9 @@ public static long folderSize(File directory) {
             mainItem.remove();
             allItems.remove(mainItem.globalPosition);
             if (current != allItems) {
-                int pos = getCurrentPosition(mainItem.globalPosition);
-                current.remove(pos);
+                int pos = currentPositionForGlobal(mainItem.globalPosition);
+                if (pos >= 0)
+                    current.remove(pos);
             }
         }
 
@@ -10124,20 +10287,34 @@ public static long folderSize(File directory) {
         }
 
         void changeLine(int line, String text) throws Exception {
+            if (allItems == null || line < 0 || line >= allItems.size())
+                throw new Exception("Text line no longer exists");
             Item item = items.get(line);
-            View mView = item.panel;
             allItems.set(line, text);
+            if (current != null && current != allItems) {
+                int filteredPosition = currentPositionForGlobal(line);
+                if (filteredPosition >= 0 && filteredPosition < current.size())
+                    current.set(filteredPosition, text);
+            }
 
-            int h0 = mView.getMeasuredHeight();
-            item.textView.setText(text);
-            item.format();
-            mView.measure(
-                    makeMeasureSpec,
+            int h0 = 0;
+            int h1 = 0;
+            if (item != null) {
+                View mView = item.panel;
+                h0 = mView.getMeasuredHeight();
+                if (item instanceof TextItem)
+                    ((TextItem)item).setRawText(text);
+                else
+                    item.textView.setText(text);
+                item.format();
+                mView.measure(
+                        makeMeasureSpec,
 
-                    makeMeasureSpec);
-            int h1 = mView.getMeasuredHeight();
+                        makeMeasureSpec);
+                h1 = mView.getMeasuredHeight();
+            }
             save();
-            if (h0 != h1){
+            if (item != null && h0 != h1){
                 mainReLayout();
                 /*listView.allHeight = null;
                 listView.relayoutList();
@@ -10280,7 +10457,15 @@ public static long folderSize(File directory) {
                     this::del,
                     cRed, bRed, 0, buttonPanel);
 
+            previousPage = new ShellButton("\u25c0 Page",
+                    this::previousPage,
+                    cBlue, bBlue, 1, buttonPanel);
+            nextPage = new ShellButton("Page \u25b6",
+                    this::nextPage,
+                    cBlue, bBlue, 1, buttonPanel);
+
             postCreate();
+            updatePageButtons();
         }
 
         private void copyAll() {
@@ -10289,20 +10474,8 @@ public static long folderSize(File directory) {
 
         @Override
         public Item getView(int position, int filteredPosition) {
-            Item item = new Item(position){
-                @Override
-                boolean isSelect(){
-                    return selectedText.containsKey(this);
-                }
-
-                @Override
-                void remove(){
-                    selectedText.remove(this);
-                    super.remove();
-                }
-
-            };
             String s = current.get(filteredPosition).toString();
+            TextItem item = new TextItem(position, s);
 
             View.OnClickListener open = new View.OnClickListener() {
                 @Override
@@ -10348,8 +10521,71 @@ public static long folderSize(File directory) {
 
             item.init(null, this, null, listW, open, settings, select, null, null);
             item.setNormalColors(cBlue, bSel1);
-            item.textView.setText(s);
+            item.setRawText(s);
             return item;
+        }
+
+        @Override
+        public Item getView(int position) throws Exception {
+            int filteredPosition = pageStart + position;
+            if (current == null || filteredPosition < 0 || filteredPosition >= current.size())
+                return null;
+
+            int globalPosition = getCurrentPosition(filteredPosition);
+            Item item = items.get(globalPosition);
+            if (item == null) {
+                item = getView(globalPosition, filteredPosition);
+                if (item != null)
+                    items.put(globalPosition, item);
+            }
+            return item;
+        }
+
+        @Override
+        void showList(ArrayList<Object> list, Integer pos) {
+            int requestedPosition = pos == null ? 0 : pos;
+            Integer loadedPosition = positionToRestore;
+            positionToRestore = null;
+            listView.loadedPosition = null;
+            Integer editedGlobalPosition = editedLineToRestore;
+            editedLineToRestore = null;
+            boolean restoredPosition = loadedPosition != null;
+            if (loadedPosition != null)
+                requestedPosition = loadedPosition;
+
+            pageStart = 0;
+            setAll(list);
+            if (editedGlobalPosition != null) {
+                int editedPosition = currentPositionForGlobal(editedGlobalPosition);
+                if (editedPosition >= 0) {
+                    requestedPosition = editedPosition;
+                    restoredPosition = true;
+                }
+            }
+            if (!restoredPosition && current != allItems)
+                requestedPosition = currentPositionForGlobal(requestedPosition);
+            int total = current == null ? 0 : current.size();
+            if (total > 0) {
+                requestedPosition = Math.max(0, Math.min(requestedPosition, total - 1));
+                pageStart = (requestedPosition / PAGE_SIZE) * PAGE_SIZE;
+                listView.setSelection(requestedPosition - pageStart);
+            } else {
+                pageStart = 0;
+                listView.setSelection(0);
+            }
+            setDefaultText();
+            if (pos != null)
+                mainRelayout2();
+        }
+
+        private int currentPositionForGlobal(int globalPosition){
+            if (current == null || current == allItems)
+                return globalPosition;
+            for (int i = 0; i < current.size(); i++) {
+                if (indexMap.get(i) == globalPosition)
+                    return i;
+            }
+            return -1;
         }
 
         /*        Integer filePos;
@@ -10365,8 +10601,35 @@ public static long folderSize(File directory) {
 
         }
 
+        private void cancelLoad(){
+            loadGeneration++;
+            Thread thread = loadThread;
+            loadThread = null;
+            if (thread != null)
+                thread.interrupt();
+        }
+
+        private boolean isCurrentLoad(int generation, File requestedFile){
+            return generation == loadGeneration && !closed && file == requestedFile;
+        }
+
+        private void failLoad(int generation, File requestedFile, String title, String message){
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (!isCurrentLoad(generation, requestedFile))
+                        return;
+                    loadThread = null;
+                    unLock();
+                    TextAdapter.this.close();
+                    okDialog(title, requestedFile.getAbsolutePath() + "\n\n" + message);
+                }
+            });
+        }
+
         @Override
         void close(){
+            cancelLoad();
             if ((fileAdapter == null)||(fileAdapter.closed)){
                 if (file != null) {
                     try {
@@ -10378,6 +10641,8 @@ public static long folderSize(File directory) {
             }
 
             if (isEdit()){
+                firstScreen.edited = null;
+                firstScreen.editedFile = null;
                 firstScreen.wholeClearText();
                 firstScreen.setDefaultFileName();
             }
@@ -10400,56 +10665,73 @@ public static long folderSize(File directory) {
 
 
         void init(DirAdapter fileAdapter, File file, int index){
+            cancelLoad();
             this.fileAdapter = fileAdapter;
             this.file = file;
             openedTextFile.put(file.getAbsolutePath(), this);
             init(index);
-            new Thread(new Runnable() {
+            lock();
+            final int generation = loadGeneration;
+            final File requestedFile = file;
+            Thread loader = new Thread(new Runnable() {
                 @Override
                 public void run() {
 
                     ArrayList<Object> ret = new ArrayList<>(32);
-                    if (!file.exists())
-                        return;
-                    if (!file.canRead())
-                        return;
-
-                    try {
-                        BufferedReader b;
-                        if (file instanceof ZipList.File2 )
-                            b = new BufferedReader(new InputStreamReader(((ZipList.File2) file).getInputStream()));
-                        else
-                            b = new BufferedReader(new FileReader(file));
-                        String readLine;
-                        while ((readLine = b.readLine()) != null) {
-                            ret.add(readLine);
+                    if (!(requestedFile instanceof ZipList.File2)
+                            && (!requestedFile.exists() || !requestedFile.canRead())) {
+                        ret.add("");
+                    } else {
+                        if (requestedFile.length() > MAX_TEXT_FILE_BYTES) {
+                            failLoad(generation, requestedFile, "Text file is too large",
+                                    new TextFileTooLargeException().getMessage());
+                            return;
                         }
-                        try {
-                            b.close();
-                        }catch (Throwable t) {
-                        }
-                        if (ret.size() == 0){
-                            ret.add("");
-                        }
-                        runOnUiThread(new Runnable() {
-                            @Override
-                            public void run() {
-                                showList(ret, 0);
-                                if (setEditedLine != null){
-                                    setEditedLine.run();
-                                    setEditedLine = null;
-                                }
-
+                        try (BufferedReader b = requestedFile instanceof ZipList.File2
+                                ? new BufferedReader(new InputStreamReader(((ZipList.File2) requestedFile).getInputStream()))
+                                : new BufferedReader(new FileReader(requestedFile))) {
+                            String readLine;
+                            long characters = 0;
+                            while ((readLine = b.readLine()) != null) {
+                                if (Thread.currentThread().isInterrupted()
+                                        || !isCurrentLoad(generation, requestedFile))
+                                    return;
+                                characters += readLine.length() + 1L;
+                                if (characters > MAX_TEXT_CHARACTERS || ret.size() >= MAX_TEXT_LINES)
+                                    throw new TextFileTooLargeException();
+                                ret.add(readLine);
                             }
-                        });
-
-                    } catch (IOException e) {
-                        printError(e.getMessage());
+                        } catch (TextFileTooLargeException e) {
+                            failLoad(generation, requestedFile, "Text file is too large", e.getMessage());
+                            return;
+                        } catch (IOException e) {
+                            String message = e.getMessage();
+                            if (!notEmpty(message))
+                                message = e.toString();
+                            failLoad(generation, requestedFile, "Can't open text file", message);
+                            return;
+                        }
                     }
 
-
+                    if (ret.size() == 0)
+                        ret.add("");
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!isCurrentLoad(generation, requestedFile))
+                                return;
+                            loadThread = null;
+                            showList(ret, 0);
+                            if (setEditedLine != null){
+                                setEditedLine.run();
+                                setEditedLine = null;
+                            }
+                        }
+                    });
                 }
-            }).start();
+            }, "ClearShell-text-loader");
+            loadThread = loader;
+            loader.start();
         }
 
         @Override
@@ -10458,7 +10740,8 @@ public static long folderSize(File directory) {
         }
         @Override
         void refresh(){
-
+            if (!finishLineEdit())
+                return;
             init(fileAdapter, file, listView.index);
             mainReLayout();
 
